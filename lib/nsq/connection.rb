@@ -287,7 +287,7 @@ module Nsq
                 @queue.push(frame) if @queue
               end
             else
-              raise 'No data from socket'
+              raise UnexpectedFrameError.new(frame)
             end
           end
 
@@ -431,7 +431,7 @@ module Nsq
         attempts += 1
         return block.call(attempts)
 
-      rescue Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH,
+      rescue UnexpectedFrameError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH,
              Errno::ENETDOWN, Errno::ENETUNREACH, Errno::ETIMEDOUT, Timeout::Error => ex
 
         raise ex if attempts >= 100

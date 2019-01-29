@@ -19,7 +19,7 @@ describe Nsq::Producer do
 
         expect{
           @producer.write('fail')
-        }.to raise_error(RuntimeError, "No data from socket")
+        }.to raise_error(Nsq::UnexpectedFrameError)
       end
     end
   end

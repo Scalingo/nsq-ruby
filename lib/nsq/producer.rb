@@ -1,4 +1,5 @@
 require_relative 'exceptions'
+require_relative 'selectable_queue'
 require_relative 'retry'
 require_relative 'client_base'
 
@@ -16,21 +17,16 @@ module Nsq
       @tls_v1 = opts[:tls_v1]
       @retry_attempts = opts[:retry_attempts] || 10
 
-      nsqlookupds = []
-      if opts[:nsqlookupd]
-        nsqlookupds = [opts[:nsqlookupd]].flatten
-        discover_repeatedly(
-          nsqlookupds: nsqlookupds,
-          interval: @discovery_interval
-        )
+      @write_queue = SelectableQueue.new(10000)
+      @response_queue = SelectableQueue.new(10000)
 
-      elsif opts[:nsqd]
-        nsqds = [opts[:nsqd]].flatten
-        nsqds.each{|d| add_connection(d, {synchronous: @synchronous})}
-
+      if nsqd = [opts[:nsqd]].flatten.first
+        @connection = add_connection(nsqd)
       else
-        add_connection('127.0.0.1:4150', {synchronous: @synchronous})
+        @connection = add_connection('127.0.0.1:4150')
       end
+
+      Thread.new { start_router() }
     end
 
     def write(*raw_messages)
@@ -60,14 +56,41 @@ module Nsq
       # stringify the messages
       messages = raw_messages.map(&:to_s)
 
-      Nsq::with_retries max_attempts: @retry_attempts do
-        # get a suitable connection to write to
-        connection = connection_for_write
+      if messages.length > 1
+        msg = { op: :mpub, topic: topic, payload: messages }
+      else
+        msg = { op: :pub, topic: topic, payload: messages.first }
+      end
 
-        if messages.length > 1
-          connection.mpub(topic, messages)
+      Nsq::with_retries max_attempts: @retry_attempts do
+        msg[:result] = SizedQueue.new(1) if @synchronous
+        @write_queue.push(msg)
+        if msg[:result]
+          value = msg[:result].pop
+          raise value if value.is_a?(Exception)
+        end
+      end
+    end
+
+    def start_router(connection)
+      transactions = []
+      loop do
+        ready, _, _ = IO::select([@response_queue, @write_queue])
+        if ready.include?(@response_queue)
+          data = @response_queue.pop
+          result = transactions.pop
+          if data[:frame].is_a?(Response)
+            result.push(nil)
+          elsif data[:frame].is_a?(Error)
+            result.push(ErrorFrameException.new(frame.data))
+          else
+            result.push(InvalidFrameException.new(frame.data))
+          end
         else
-          connection.pub(topic, messages.first)
+          data = @write_queue.pop
+          return if data[:op] == :stop_router
+          @connection.send(data[:op], data[:topic], data[:payload])
+          transactions.push(data[:result])
         end
       end
     end
@@ -79,6 +102,15 @@ module Nsq
       messages.each do |msg|
         connection.dpub(topic, (delay * 1000).to_i, msg)
       end
+    end
+
+    def stop_router
+      @write_queue.push(op: :stop_router)
+    end
+
+    def terminate
+      stop_router
+      super
     end
 
     private

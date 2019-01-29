@@ -29,8 +29,8 @@ module Nsq
     def initialize(opts = {})
       @host = opts[:host] || (raise ArgumentError, 'host is required')
       @port = opts[:port] || (raise ArgumentError, 'port is required')
-      @synchronous = opts[:synchronous] || false
       @ok_timeout = opts[:ok_timeout] || 5
+      @response_queue = opts[:response_queue]
       @queue = opts[:queue]
       @topic = opts[:topic]
       @channel = opts[:channel]
@@ -62,7 +62,6 @@ module Nsq
 
       # for outgoing communication
       @write_queue = SelectableQueue.new(10000)
-      @transactions = []
 
       # For indicating that the connection has died.
       # We use a Queue so we don't have to poll. Used to communicate across
@@ -156,17 +155,7 @@ module Nsq
 
 
     def write(raw)
-      result = @synchronous && (raw =~ /^M?PUB/) ? SizedQueue.new(1) : nil
-      @write_queue.push({
-        message: raw,
-        result: result,
-      })
-      if result
-        value = Timeout::timeout @ok_timeout do
-          result.pop
-        end
-        raise value if value.is_a?(Exception)
-      end
+      @write_queue.push(message: raw)
     end
 
     def write_to_socket(raw)
@@ -205,6 +194,7 @@ module Nsq
 
 
     def handle_response(frame)
+      @response_queue.push(frame) if @response_queue
       if frame.data == RESPONSE_HEARTBEAT
         debug 'Received heartbeat'
         nop
@@ -212,6 +202,14 @@ module Nsq
         debug 'Received OK'
       else
         die "Received response we don't know how to handle: #{frame.data}"
+      end
+    end
+
+    def handle_error(frame)
+      if @response_queue
+        @response_queue.push(frame)
+      else
+        error "Error received: #{frame.data}"
       end
     end
 
@@ -267,20 +265,11 @@ module Nsq
 
           if ready.include?(@socket)
             frame = receive_frame
-            result = @transactions.pop
             if frame.is_a?(Response)
-              # If the producer is expecting a result
-              # signal everything went fine pushing any value
-              result.push(nil) if result
               handle_response(frame)
             elsif frame.is_a?(Error)
-              if result
-                result.push(ErrorFrameException.new(frame.data))
-              else
-                error "Error received: #{frame.data}"
-              end
+              handle_error(frame)
             elsif frame.is_a?(Message)
-              result.push(nil) if result
               debug "<<< #{frame.body}"
               if @max_attempts && frame.attempts > @max_attempts
                 fin(frame.id)
@@ -295,7 +284,6 @@ module Nsq
           if ready.include?(@write_queue)
             data = @write_queue.pop
             return if data[:message] == :stop_loop
-            @transactions.push(data[:result])
             write_to_socket(data[:message])
           end
         rescue IO::WaitReadable

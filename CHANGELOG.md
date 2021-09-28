@@ -1,5 +1,9 @@
 # Changelog
 
+## To be Released
+
+*  Bump nokogiri from 1.11.5 to 1.12.5 (#10)
+
 ## 2.3.1
 
 * Fix `max_attempts` bug (#46)

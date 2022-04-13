@@ -2,7 +2,7 @@
 
 ## To be Released
 
-*  Bump nokogiri from 1.11.5 to 1.12.5 (#10)
+*  Bump nokogiri from 1.11.5 to 1.13.4
 
 ## 2.3.1
 

@@ -2,7 +2,8 @@
 
 ## To be Released
 
-*  Bump nokogiri from 1.11.5 to 1.13.4
+* Bump nokogiri from 1.11.5 to 1.13.4
+* Bump git from 1.3.0 to 1.11.0
 
 ## 2.3.1
 

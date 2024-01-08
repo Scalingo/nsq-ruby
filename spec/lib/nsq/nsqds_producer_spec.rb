@@ -48,6 +48,23 @@ describe Nsq::Producer do
       end
     end
 
+    describe '#connected?' do
+      it 'returns true when all nsqds are connected' do
+        expect(@producer.connected?).to eq(true)
+      end
+
+      it 'returns true when at least one nsqd is connected' do
+        @cluster.nsqd.first.stop
+        expect(@producer.connected?).to eq(true)
+      end
+
+      it 'returns false when all nsqds are down' do
+        @cluster.nsqd.map(&:stop)
+        wait_for { !@producer.connected? }
+        expect(@producer.connected?).to eq(false)
+      end
+    end
+
     context 'failover strategy' do
       before do
         @producer = new_nsqds_producer(@cluster.nsqd, synchronous: true, retry_attempts: 1, ok_timeout: 1)

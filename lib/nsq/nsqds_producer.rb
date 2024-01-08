@@ -30,6 +30,10 @@ module Nsq
       end
     end
 
+    def connected?
+      @producers.any?(&:connected?)
+    end
+
     def terminate
       @producers.each do |producer|
         producer.terminate

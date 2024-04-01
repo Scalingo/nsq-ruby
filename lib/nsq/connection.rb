@@ -68,6 +68,7 @@ module Nsq
       @death_queue = Queue.new
 
       @connected = false
+      @paused = false
       @presumed_in_flight = 0
 
       open_connection
@@ -79,6 +80,21 @@ module Nsq
       @connected
     end
 
+    def paused?
+      @paused
+    end
+
+    def pause
+      return if paused?
+      rdy(0)
+      @paused = true
+    end
+
+    def resume
+      return if !paused?
+      rdy(@max_in_flight)
+      @paused = false
+    end
 
     # close the connection and don't try to re-open it
     def close

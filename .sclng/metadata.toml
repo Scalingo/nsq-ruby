@@ -3,5 +3,5 @@ description = "simple NSQ client library"
 flags = ["lib"]
 languages = ["ruby"]
 owner = "leo@scalingo.com"
-team = "IST"
+team = "UFS"
 version = "1.1.0"

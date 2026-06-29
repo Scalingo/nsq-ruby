@@ -49,6 +49,13 @@ describe Nsq::Producer do
     end
 
     describe '#connected?' do
+      before do
+        @producer = new_nsqds_producer(@cluster.nsqd, synchronous: true, retry_attempts: 1, ok_timeout: 1)
+      end
+      after do
+        @producer.terminate if @producer
+      end
+
       it 'returns true when all nsqds are connected' do
         expect(@producer.connected?).to eq(true)
       end

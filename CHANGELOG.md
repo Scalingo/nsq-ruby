@@ -1,9 +1,17 @@
 # Changelog
 
-## To be Released
+## 2.4.1
 
-* Bump nokogiri from 1.11.5 to 1.13.4
-* Bump git from 1.3.0 to 1.11.0
+* Client version connection string should also read from the VERSION file
+
+## 2.4.0
+
+* Remove jeweler gem in favor of using a dynamic gemspec [#66](https://github.com/wistia/nsq-ruby/pull/66)
+* Use `URI.encode_www_form_component` instead of `URI.escape` to ensure compatibility with Ruby 3.0+ and fix deprecation warnings in Ruby 2.7. [#65](https://github.com/wistia/nsq-ruby/pull/65)
+* Update version of `nsq-cluster` used for tests [#66](https://github.com/wistia/nsq-ruby/pull/66)
+* Update TLS certificates used for tests [#66](https://github.com/wistia/nsq-ruby/pull/66)
+* GitHub Actions workflow for testing the gem against a matrix of Ruby versions (2.7, 3.0, 3.1, 3.2) introduced [#66](https://github.com/wistia/nsq-ruby/pull/66)
+* Support specifying multiple nsqd's when creating a consumer. [#54](https://github.com/wistia/nsq-ruby/pull/54)
 
 ## 2.3.1
 

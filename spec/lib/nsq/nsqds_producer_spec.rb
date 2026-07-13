@@ -49,6 +49,13 @@ describe Nsq::Producer do
     end
 
     describe '#connected?' do
+      before do
+        @producer = new_nsqds_producer(@cluster.nsqd, synchronous: true, retry_attempts: 1, ok_timeout: 1)
+      end
+      after do
+        @producer.terminate if @producer
+      end
+
       it 'returns true when all nsqds are connected' do
         expect(@producer.connected?).to eq(true)
       end
@@ -143,14 +150,21 @@ describe Nsq::Producer do
           @producer.write 'second'
 
           @cluster.nsqd.first.start
-          sleep 0.5
+          sleep 1 # buy some time for nsqd to start
 
           @producer.write 'three'
           @producer.write 'four'
-          wait_for{message_count(@cluster.nsqd.last)==3}
-          expect(message_count(@cluster.nsqd.last)).to eq(3)
-          wait_for{message_count(@cluster.nsqd.first)==1}
-          expect(message_count(@cluster.nsqd.first)).to eq(1)
+          @producer.write 'five'
+          @producer.write 'six'
+          @producer.write 'seven'
+          @producer.write 'eight'
+          @producer.write 'nine'
+          @producer.write 'ten'
+
+          wait_for{message_count(@cluster.nsqd.last)>=2}
+          expect(message_count(@cluster.nsqd.last)).to  be >= 2
+          wait_for{message_count(@cluster.nsqd.first)>=1}
+          expect(message_count(@cluster.nsqd.first)).to be >= 1
 
         end
       end

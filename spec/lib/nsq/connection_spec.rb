@@ -219,9 +219,51 @@ describe Nsq::Connection do
         allow(@connection).to receive(:write_to_socket) { |raw| written << raw }
 
         @connection.send(:start_read_write_loop)
-        @connection.send(:nop)
+        @connection.send(:write, "NOP\n")
 
         assert_no_timeout { expect(written.pop).to eq("NOP\n") }
+      end
+    end
+
+
+    describe 'writes issued by the loop thread' do
+      before do
+        @connection.send(:stop_monitoring_connection)
+        @connection.send(:stop_read_write_loop)
+
+        @written = []
+        allow(@connection).to receive(:write_to_socket) { |raw| @written << raw }
+        allow(@connection).to receive(:die)
+
+        @write_queue = @connection.instance_variable_get(:@write_queue)
+        @connection.instance_variable_set(:@write_queue, SelectableQueue.new(1).push(message: 'queued'))
+
+        readable, writable = IO.pipe
+        writable.close
+        @nsqd_socket = @connection.instance_variable_get(:@socket)
+        @connection.instance_variable_set(:@socket, readable)
+      end
+
+      after do
+        @connection.instance_variable_get(:@socket).close
+        @connection.instance_variable_set(:@socket, @nsqd_socket)
+        @connection.instance_variable_set(:@write_queue, @write_queue)
+      end
+
+      it 'answers a heartbeat when the write queue is full' do
+        frame = Nsq::Response.new(described_class::RESPONSE_HEARTBEAT, @connection)
+        assert_no_timeout { @connection.send(:handle_response, frame) }
+        expect(@written).to eq(["NOP\n"])
+      end
+
+      it 'finishes a message over max_attempts when the write queue is full' do
+        id = 'a' * 16
+        message = Nsq::Message.new([0, 2, id, 'body'].pack('Q>S>a16a*'), @connection)
+        allow(@connection).to receive(:receive_frame).and_return(message, nil)
+        @connection.instance_variable_set(:@max_attempts, 1)
+
+        assert_no_timeout { @connection.send(:read_write_loop) }
+        expect(@written).to include("FIN #{id}\n")
       end
     end
   end

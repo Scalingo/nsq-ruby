@@ -207,5 +207,22 @@ describe Nsq::Connection do
         assert_no_timeout { @connection.send(:read_write_loop) }
       end
     end
+
+
+    describe '#start_read_write_loop' do
+      it 'ignores a stop marker left behind by a previous loop' do
+        @connection.send(:stop_read_write_loop)
+        write_queue = @connection.instance_variable_get(:@write_queue)
+        write_queue.push(message: :stop_loop, thread: Thread.new {}.join)
+
+        written = Queue.new
+        allow(@connection).to receive(:write_to_socket) { |raw| written << raw }
+
+        @connection.send(:start_read_write_loop)
+        @connection.send(:nop)
+
+        assert_no_timeout { expect(written.pop).to eq("NOP\n") }
+      end
+    end
   end
 end

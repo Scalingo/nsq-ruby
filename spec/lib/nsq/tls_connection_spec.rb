@@ -94,6 +94,16 @@ describe Nsq::Connection do
       producer.terminate
       consumer.terminate
     end
+
+    it 'receives frames that arrive together in a single read' do
+      10.times { |i| @nsqd.pub(TOPIC, "message-#{i}") }
+
+      consumer = new_consumer(tls_v1: true, max_in_flight: 10)
+      assert_no_timeout(5) do
+        10.times { consumer.pop.finish }
+      end
+      consumer.terminate
+    end
   end
 
 

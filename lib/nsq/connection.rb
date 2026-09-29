@@ -148,8 +148,9 @@ module Nsq
     end
 
 
+    # only called from the loop thread, which must not block on its own queue
     def nop
-      write "NOP\n"
+      write_to_socket "NOP\n"
     end
 
 
@@ -273,7 +274,9 @@ module Nsq
             elsif frame.is_a?(Message)
               debug "<<< #{frame.body}"
               if @max_attempts && frame.attempts > @max_attempts
-                fin(frame.id)
+                # bypass @write_queue: this thread is its only consumer
+                write_to_socket "FIN #{frame.id}\n"
+                decrement_in_flight
               else
                 @queue.push(frame) if @queue
               end

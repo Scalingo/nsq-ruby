@@ -266,5 +266,81 @@ describe Nsq::Connection do
         expect(@written).to include("FIN #{id}\n")
       end
     end
+
+
+    describe 'write failure in the loop' do
+      let(:pub) { ["PUB #{TOPIC}\n", 5, 'hello'].pack('a*l>a*') }
+      let(:heartbeat) { Nsq::Response.new(described_class::RESPONSE_HEARTBEAT, @connection) }
+
+      before do
+        @connection.send(:stop_monitoring_connection)
+        @connection.send(:stop_read_write_loop)
+        allow(@connection).to receive(:die)
+
+        @write_queue = @connection.instance_variable_get(:@write_queue)
+        @queue = SelectableQueue.new(2)
+        @connection.instance_variable_set(:@write_queue, @queue)
+
+        # the first frame is a heartbeat, the next read fails
+        reads = 0
+        allow(@connection).to receive(:receive_frame) do
+          (reads += 1) == 1 ? heartbeat : raise(Errno::ECONNRESET)
+        end
+
+        readable, writable = IO.pipe
+        writable.close
+        @nsqd_socket = @connection.instance_variable_get(:@socket)
+        @connection.instance_variable_set(:@socket, readable)
+      end
+
+      after do
+        @connection.instance_variable_get(:@socket).close
+        @connection.instance_variable_set(:@socket, @nsqd_socket)
+        @connection.instance_variable_set(:@write_queue, @write_queue)
+      end
+
+      def drain(queue)
+        items = []
+        items << queue.pop(true)[:message] until queue.empty?
+        items
+      end
+
+      it 'requeues a publish whose write raised' do
+        allow(@connection).to receive(:write_to_socket) { |raw| raise Errno::EPIPE if raw == pub }
+        @queue.push(message: pub)
+
+        assert_no_timeout { @connection.send(:read_write_loop) }
+        expect(drain(@queue)).to eq([pub])
+      end
+
+      it 'does not requeue a command that is not a publish' do
+        allow(@connection).to receive(:write_to_socket) { |raw| raise Errno::EPIPE if raw.start_with?('FIN') }
+        @queue.push(message: "FIN #{'a' * 16}\n")
+
+        assert_no_timeout { @connection.send(:read_write_loop) }
+        expect(@queue).to be_empty
+      end
+
+      it 'does not requeue a publish that was written before a read failed' do
+        allow(@connection).to receive(:write_to_socket)
+        @queue.push(message: pub)
+
+        assert_no_timeout { @connection.send(:read_write_loop) }
+        expect(@connection).to have_received(:write_to_socket).with(pub).once
+        expect(@queue).to be_empty
+      end
+
+      it 'drops the publish rather than blocking when the write queue is full' do
+        allow(@connection).to receive(:write_to_socket) do |raw|
+          next unless raw == pub
+          2.times { @queue.push(message: 'filler') }
+          raise Errno::EPIPE
+        end
+        @queue.push(message: pub)
+
+        assert_no_timeout { @connection.send(:read_write_loop) }
+        expect(drain(@queue)).to eq(['filler', 'filler'])
+      end
+    end
   end
 end

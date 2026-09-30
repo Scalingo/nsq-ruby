@@ -270,6 +270,7 @@ module Nsq
     end
 
     def read_write_loop
+      in_flight = nil
       loop do
         ready, _, _ = IO.select([@socket, @write_queue])
 
@@ -285,11 +286,23 @@ module Nsq
             return if data[:thread] == Thread.current
             next # left behind by a loop that exited before reading it
           end
-          write_to_socket(data[:message])
+          in_flight = data[:message]
+          write_to_socket(in_flight)
+          in_flight = nil
         end
       end
     rescue Exception => ex
+      requeue_publish(in_flight)
       die(ex)
+    end
+
+    # non-blocking: this thread is the write queue's only consumer
+    def requeue_publish(raw)
+      return unless raw&.start_with?('PUB ', 'MPUB ', 'DPUB ')
+      debug "Requeueing to write_queue: #{raw.inspect}"
+      @write_queue.push({ message: raw }, true)
+    rescue ThreadError
+      error "Write queue full, dropping: #{raw[/\A[^\n]*/]}"
     end
 
     def handle_frame(frame)

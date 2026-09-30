@@ -44,6 +44,12 @@ describe Nsq::Producer do
 
         expect{ @producer.write('fail') }.not_to raise_error
       end
+
+      it 'raises an error frame from nsqd without retrying' do
+        expect {
+          Timeout.timeout(0.5) { @producer.write_to_topic('invalid*topic', 'x') }
+        }.to raise_error(Nsq::ErrorFrameException, /E_BAD_TOPIC/)
+      end
     end
   end
 

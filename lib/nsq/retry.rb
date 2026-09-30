@@ -19,8 +19,10 @@ module Nsq
         attempts += 1
         return block.call(attempts)
 
-      rescue UnexpectedFrameError, ErrorFrameException, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH,
-             Errno::ENETDOWN, Errno::ENETUNREACH, Errno::ETIMEDOUT, Timeout::Error, SocketError => ex
+      # E_* error frames (ErrorFrameException) are nsqd's final answer: not retried
+      rescue UnexpectedFrameError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH,
+             Errno::ENETDOWN, Errno::ENETUNREACH, Errno::ETIMEDOUT, Errno::EPIPE, IOError,
+             Timeout::Error, SocketError => ex
 
         raise ex if attempts >= max_attempts
 

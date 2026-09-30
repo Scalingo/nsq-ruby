@@ -369,10 +369,8 @@ module Nsq
     end
 
     def push_error_pending_writes cause_of_death
-      while !@write_queue.empty?
-        data = @write_queue.pop
-        @response_queue.push(cause_of_death) if @response_queue
-      end
+      @write_queue.pop until @write_queue.empty?
+      @response_queue.push(cause_of_death) if @response_queue
     end
 
     def open_connection

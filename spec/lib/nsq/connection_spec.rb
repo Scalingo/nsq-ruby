@@ -172,5 +172,40 @@ describe Nsq::Connection do
         @connection.send(:handle_response, frame)
       end
     end
+
+
+    describe '#read_write_loop' do
+      before do
+        @connection.send(:stop_monitoring_connection)
+        @connection.send(:stop_read_write_loop)
+
+        # a socket that IO.select always reports as readable
+        readable, writable = IO.pipe
+        writable.close
+        @nsqd_socket = @connection.instance_variable_get(:@socket)
+        @connection.instance_variable_set(:@socket, readable)
+      end
+
+      after do
+        @connection.instance_variable_get(:@socket).close
+        @connection.instance_variable_set(:@socket, @nsqd_socket)
+      end
+
+      it 'stops after an empty frame from the socket' do
+        allow(@connection).to receive(:receive_frame).and_return(nil)
+        expect(@connection).to receive(:die).once.with(
+          an_instance_of(Nsq::UnexpectedFrameError).and(having_attributes(message: 'empty frame from socket'))
+        )
+        assert_no_timeout { @connection.send(:read_write_loop) }
+      end
+
+      it 'stops after a response it does not know how to handle' do
+        allow(@connection).to receive(:receive_frame).and_return(Nsq::Response.new('bogus', @connection))
+        expect(@connection).to receive(:die).once.with(
+          an_instance_of(RuntimeError).and(having_attributes(message: /don't know how to handle: bogus/))
+        )
+        assert_no_timeout { @connection.send(:read_write_loop) }
+      end
+    end
   end
 end

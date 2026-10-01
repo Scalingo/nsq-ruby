@@ -18,11 +18,18 @@ module Nsq
         raise ArgumentError, "strategy should be one of #{STRATEGIES.join(", ")}"
       end
 
+      # failover relies on write raising, which only synchronous producers do
+      if opts.key?(:synchronous) && !opts[:synchronous]
+        raise ArgumentError, 'NsqdsProducer requires synchronous producers'
+      end
+      opts = opts.merge(synchronous: true)
+
       if @nsqds && !@nsqds.is_a?(Array)
         raise ArgumentError, "nsqds should be an array of hosts 'host:port'"
       elsif !@nsqds
         @nsqds = ['127.0.0.1:4150']
       end
+      @attempts ||= @nsqds.length
 
       @index = 0
       @producers = @nsqds.map do |nsqd|
@@ -67,7 +74,7 @@ module Nsq
         error producer: @producers[@index].nsqd, msg: "fail to #{action} message: #{ex.message}", exception: ex.class
         inc_index
         attempt += 1
-        raise ex if attempt == @attempts
+        raise ex if attempt >= @attempts
         retry
       end
     end

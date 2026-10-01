@@ -46,6 +46,20 @@ describe Nsq::Producer do
           new_nsqds_producer(@cluster.nsqd, strategy: :none)
         }.to raise_error(ArgumentError, "strategy should be one of failover, round_robin")
       end
+
+      it 'should throw an exception if synchronous is explicitly disabled' do
+        expect{
+          new_nsqds_producer(@cluster.nsqd, synchronous: false)
+        }.to raise_error(ArgumentError, 'NsqdsProducer requires synchronous producers')
+      end
+
+      it 'should use synchronous producers by default' do
+        producer = new_nsqds_producer(@cluster.nsqd)
+        producers = producer.instance_variable_get(:@producers)
+        expect(producers.map { |p| p.instance_variable_get(:@synchronous) }).to all(eq(true))
+      ensure
+        producer.terminate if producer
+      end
     end
 
     describe '#connected?' do
@@ -69,6 +83,25 @@ describe Nsq::Producer do
         @cluster.nsqd.map(&:stop)
         wait_for { !@producer.connected? }
         expect(@producer.connected?).to eq(false)
+      end
+    end
+
+    describe '#write when every nsqd is down' do
+      before do
+        @producer = new_nsqds_producer(@cluster.nsqd, retry_attempts: 1, ok_timeout: 1)
+        @cluster.nsqd.map(&:stop)
+        wait_for { !@producer.connected? }
+      end
+      after do
+        @producer.terminate if @producer
+      end
+
+      it 'gives up after trying each nsqd once' do
+        # not a StandardError, so each_provider cannot swallow it
+        gave_up_too_late = Class.new(Exception)
+        expect {
+          Timeout.timeout(10, gave_up_too_late) { @producer.write('lost') }
+        }.to raise_error(StandardError)
       end
     end
 
@@ -105,6 +138,7 @@ describe Nsq::Producer do
           expect(message_count(@cluster.nsqd[1])).to eq(2)
 
           @cluster.nsqd[0].start
+          wait_for{@producer.instance_variable_get(:@producers)[0].connected?}
           @cluster.nsqd[1].stop
 
           @producer.write 'third'

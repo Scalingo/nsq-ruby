@@ -17,7 +17,7 @@ nsq-ruby is a simple NSQ client library written in Ruby.
 ```Ruby
 require 'nsq'
 producer = Nsq::Producer.new(
-  nsqd: '127.0.0.1:4150', # or ['127.0.0.1:4150']
+  nsqd: '127.0.0.1:4150',
   topic: 'some-topic'
 )
 
@@ -65,31 +65,25 @@ consumer.terminate
 
 The Nsq::Producer constructor takes the following options:
 
-| Option        | Description                            | Default            |
-|---------------|----------------------------------------|--------------------|
-| `topic`       | Topic to which to publish messages     |                    |
-| `nsqd`        | Host and port of the nsqd instance     | '127.0.0.1:4150'   |
-| `nsqlookupd`  | Use lookupd to auto discover nsqds     |                    |
-| `tls_v1`      | Flag for tls v1 connections            | false              |
-| `tls_options` | Optional keys+certs for TLS connections|                    |
+| Option           | Description                                                    | Default            |
+|------------------|----------------------------------------------------------------|--------------------|
+| `topic`          | Topic to which to publish messages                             |                    |
+| `nsqd`           | Host and port of the nsqd instance, as a string `'host:port'`  | '127.0.0.1:4150'   |
+| `synchronous`    | Wait for nsqd to acknowledge each write                        | false              |
+| `ok_timeout`     | Seconds to wait for the acknowledgement (synchronous only)     | 3                  |
+| `retry_attempts` | Attempts per write before raising (synchronous only)           | 3                  |
+| `tls_v1`         | Flag for tls v1 connections                                    | false              |
+| `tls_options`    | Optional keys+certs for TLS connections                        |                    |
 
-For example, if you'd like to publish messages to a single nsqd.
+**Note:** Unlike the Consumer, a Producer connects to exactly one nsqd.
+`nsqlookupd` and a list of nsqds are not supported; to publish to several
+nsqds use [`Nsq::NsqdsProducer`](#nsqdsproducer).
 
-```Ruby
-producer = Nsq::Producer.new(
-  nsqd: '6.7.8.9:4150', # or ['6.7.8.9:4150']
-  topic: 'topic-of-great-esteem'
-)
-```
-
-Alternatively, you can use nsqlookupd to find all nsqd nodes in the cluster.
-When you instantiate Nsq::Producer in this way, it will automatically maintain
-connections to all nsqd instances. When you publish a message, it will be sent
-to a random nsqd instance.
+For example, if you'd like to publish messages to a nsqd.
 
 ```Ruby
 producer = Nsq::Producer.new(
-  nsqlookupd: ['1.2.3.4:4161', '6.7.8.9:4161'],
+  nsqd: '6.7.8.9:4150',
   topic: 'topic-of-great-esteem'
 )
 ```
@@ -98,7 +92,7 @@ If you need to connect using SSL/TLS Authentication via `tls_options`
 
 ```Ruby
 producer = Nsq::Producer.new(
-  nsqlookupd: ['1.2.3.4:4161', '6.7.8.9:4161'],
+  nsqd: '6.7.8.9:4150',
   topic: 'topic-of-great-esteem',
   tls_v1: true,
   tls_options: {
@@ -114,7 +108,7 @@ If you need to connect using simple `tls_v1`
 
 ```Ruby
 producer = Nsq::Producer.new(
-  nsqlookupd: ['1.2.3.4:4161', '6.7.8.9:4161'],
+  nsqd: '6.7.8.9:4150',
   topic: 'topic-of-great-esteem',
   tls_v1: true
 )
@@ -144,10 +138,44 @@ producing messages faster than we're able to send them to nsqd or nsqd is
 offline for an extended period and you accumulate 10,000 messages in the queue,
 calls to `#write` will block until there's room in the queue.
 
-**Note:** We don't wait for nsqd to acknowledge our writes. As a result, if the
-connection to nsqd fails, you can lose messages. This is acceptable for our use
-cases, mostly because we are sending messages to a local nsqd instance and
-failure is very rare.
+**Note:** By default we don't wait for nsqd to acknowledge our writes. As a
+result, if the connection to nsqd fails, you can lose messages. This is
+acceptable when sending messages to a local nsqd instance where failure is very
+rare. If you can't afford that, use `synchronous: true` (see below).
+
+
+### Synchronous writes
+
+With `synchronous: true`, `#write` (and the other write methods) wait for nsqd
+to answer before returning.
+
+```Ruby
+producer = Nsq::Producer.new(
+  nsqd: '6.7.8.9:4150',
+  topic: 'topic-of-great-esteem',
+  synchronous: true,
+  ok_timeout: 3,     # seconds to wait for nsqd's answer
+  retry_attempts: 3  # attempts before the error is raised
+)
+
+begin
+  producer.write('important')
+rescue Nsq::ErrorFrameException => e
+  # nsqd rejected the message (e.g. E_BAD_TOPIC): it is not retried
+rescue StandardError => e
+  # the connection failed, or nsqd did not answer within `ok_timeout`,
+  # `retry_attempts` times
+end
+```
+
+- A write that fails because the connection broke, or that gets no answer
+  within `ok_timeout`, is retried up to `retry_attempts` times with exponential
+  backoff, then the error is raised.
+- An error nsqd sends back about the message itself (`Nsq::ErrorFrameException`)
+  is raised right away: sending it again would get the same answer.
+- **Delivery is at-least-once.** If nsqd accepted a message but its answer was
+  late or lost, the retry publishes it a second time. Consumers should be
+  idempotent.
 
 
 ### `#write_to_topic`
@@ -184,6 +212,50 @@ these messages to be lost. After you write your last message, consider sleeping
 for a second before you call `#terminate`.
 
 
+## NsqdsProducer
+
+`Nsq::NsqdsProducer` publishes to several nsqd instances. It keeps one
+`Nsq::Producer` per nsqd and moves to another nsqd when a write fails, so a
+down nsqd doesn't block publishing.
+
+```Ruby
+producer = Nsq::NsqdsProducer.new(
+  nsqds: ['1.2.3.4:4150', '6.7.8.9:4150'],
+  topic: 'topic-of-great-esteem',
+  strategy: Nsq::NsqdsProducer::STRATEGY_FAILOVER,
+  strategy_attempts: 2
+)
+
+producer.write('some-message')
+```
+
+It takes the same options as `Nsq::Producer` (`topic`, `ok_timeout`,
+`retry_attempts`, `tls_v1`, `tls_options`), plus:
+
+| Option              | Description                                               | Default                  |
+|---------------------|-----------------------------------------------------------|--------------------------|
+| `nsqds`             | Array of `'host:port'` strings                            | `['127.0.0.1:4150']`     |
+| `strategy`          | `:failover` or `:round_robin`                             | `:failover`              |
+| `strategy_attempts` | nsqds to try for one write before the error is raised     | the number of nsqds      |
+
+- `:failover` keeps writing to the same nsqd until a write fails, then moves to
+  the next one.
+- `:round_robin` uses the next nsqd for every write, and also skips an nsqd
+  whose write failed.
+- Writes are always **synchronous**: failover needs a failed write to raise.
+  `synchronous` defaults to `true`, and `synchronous: false` raises an
+  `ArgumentError`.
+- Every attempt is a full synchronous write, with its own `ok_timeout` and
+  `retry_attempts`. With the defaults, a write that fails on every nsqd can
+  take about `number of nsqds × retry_attempts × ok_timeout` seconds before
+  the error is raised.
+- Like any synchronous write, delivery is at-least-once: a message may reach
+  an nsqd and be published again to another one after a timeout.
+- The constructor raises if one of the nsqds can't be reached.
+
+It responds to `#write`, `#write_to_topic`, `#deferred_write`,
+`#deferred_write_to_topic`, `#connected?` (true if at least one nsqd is
+connected) and `#terminate`.
 
 
 ## Consumer
@@ -344,9 +416,11 @@ connection timeout support (0.2.29).
 
 ### Supports
 
-- Discovery via nsqlookupd
+- Discovery via nsqlookupd (consumers)
 - Automatic reconnection to nsqd
-- Producing to all nsqd instances automatically via nsqlookupd
+- Producing to several nsqd instances, with failover or round robin
+  (`Nsq::NsqdsProducer`)
+- Waiting for nsqd to acknowledge writes (`synchronous: true`)
 - TLS
 
 

@@ -30,8 +30,9 @@ class SelectableQueue
     @queue.empty?
   end
 
-  def push(o)
-    @queue.push(o)
+  # non_block requires a sized queue; raises ThreadError when it is full
+  def push(o, non_block = false)
+    non_block ? @queue.push(o, true) : @queue.push(o)
     # It doesn't matter what we write into the pipe, as long as it's one byte.
     # It's not blocking until full, and has a default limit of 65536 (64KB)
     @write_io << '.'
@@ -48,4 +49,3 @@ class SelectableQueue
     @read_io
   end
 end
-

@@ -22,6 +22,8 @@ module Nsq
       @write_queue = SelectableQueue.new(10000)
 
       @response_queue = SelectableQueue.new(10000) if @synchronous
+      # result queues of sent writes, in the order nsqd will answer them
+      @transactions = []
 
       if @nsqd
         raise ArgumentError, "should be a string 'host:port'" if !@nsqd.is_a?(String)
@@ -100,18 +102,21 @@ module Nsq
     end
 
     def start_router
-      transactions = []
       queues = [@write_queue]
       queues << @response_queue if @response_queue
       loop do
         ready, _, _ = IO::select(queues)
         if ready.include?(@response_queue)
           frame = @response_queue.pop
-          result = transactions.pop
-          next if result.nil?
           if frame.is_a?(Exception)
-            result.push(frame)
-          elsif frame.is_a?(Response)
+            # the connection died: nothing in flight will be answered
+            @transactions.each { |result| result.push(frame) }
+            @transactions.clear
+            next
+          end
+          result = @transactions.shift
+          next if result.nil?
+          if frame.is_a?(Response)
             result.push(nil)
           elsif frame.is_a?(Error)
             result.push(ErrorFrameException.new(frame.data))
@@ -126,7 +131,7 @@ module Nsq
           else
             @connection.send(data[:op], data[:topic], data[:payload])
           end
-          transactions.push(data[:result])
+          @transactions.push(data[:result]) if data[:result]
         end
       end
     end

@@ -342,5 +342,31 @@ describe Nsq::Connection do
         expect(drain(@queue)).to eq(['filler', 'filler'])
       end
     end
+
+
+    describe '#push_error_pending_writes' do
+      before do
+        @connection.send(:stop_monitoring_connection)
+        @connection.send(:stop_read_write_loop)
+        @response_queue = Queue.new
+        @connection.instance_variable_set(:@response_queue, @response_queue)
+      end
+
+      it 'drains the write queue and reports the cause of death once' do
+        3.times { @connection.send(:write, "PUB #{TOPIC}\n") }
+        cause = Errno::ECONNRESET.new
+
+        @connection.send(:push_error_pending_writes, cause)
+
+        expect(@connection.instance_variable_get(:@write_queue)).to be_empty
+        expect(@response_queue.size).to eq(1)
+        expect(@response_queue.pop).to be(cause)
+      end
+
+      it 'reports the cause of death even when nothing is queued' do
+        @connection.send(:push_error_pending_writes, Errno::ECONNRESET.new)
+        expect(@response_queue.size).to eq(1)
+      end
+    end
   end
 end

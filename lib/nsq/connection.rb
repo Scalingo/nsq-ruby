@@ -200,7 +200,7 @@ module Nsq
         @response_queue.push(frame) if @response_queue
         debug 'Received OK'
       else
-        die "Received response we don't know how to handle: #{frame.data}"
+        raise "Received response we don't know how to handle: #{frame.data}"
       end
     end
 
@@ -276,7 +276,7 @@ module Nsq
                 @queue.push(frame) if @queue
               end
             else
-              die(UnexpectedFrameError.new(frame))
+              raise UnexpectedFrameError.new(frame)
             end
           end
 

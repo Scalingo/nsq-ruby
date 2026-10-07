@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+* `Nsq::NsqdsProducer` always uses synchronous producers: `synchronous` defaults to `true`, and `synchronous: false` raises an `ArgumentError`.
+* `Nsq::NsqdsProducer` gives up after trying each nsqd once when `strategy_attempts` is not set, instead of retrying forever. Pass `strategy_attempts: Float::INFINITY` for the previous behaviour.
+* `Nsq.with_retries` no longer retries error frames from nsqd (`Nsq::ErrorFrameException`): a synchronous write rejected by nsqd raises immediately.
+
+### Fixes
+
+* A connection that receives an empty frame or an unknown response now stops its loop instead of spinning until it is reconnected.
+* A stale stop marker can no longer end the loop of a reconnected connection.
+* The connection thread no longer deadlocks when answering a heartbeat or finishing a message over `max_attempts` while the write queue is full.
+* TLS connections no longer leave frames unread until the next packet arrives.
+* A `PUB`, `MPUB` or `DPUB` whose socket write raised is sent again after the reconnect.
+* Synchronous producers match responses to writes in order, no longer keep track of writes in asynchronous mode (memory growth), and fail every pending write when the connection dies.
+* `Nsq.with_retries` retries `Errno::EPIPE` and `IOError`.
+* `Nsq::UnexpectedFrameError#message` no longer raises a `NameError`.
+
+## 2.5.0 (fork, previously undocumented)
+
+### Breaking changes
+
+* `Nsq::Producer` connects to a single nsqd: the `nsqlookupd` option and a list of nsqds in `nsqd` are no longer supported. Use `Nsq::NsqdsProducer` for several nsqds.
+
+### Features
+
+* `Nsq::Producer` takes `synchronous`, `ok_timeout` and `retry_attempts` to wait for nsqd to acknowledge each write.
+* New `Nsq::NsqdsProducer` with `:failover` and `:round_robin` strategies.
+
 ## 2.4.1
 
 * Client version connection string should also read from the VERSION file

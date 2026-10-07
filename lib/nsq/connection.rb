@@ -214,13 +214,22 @@ module Nsq
     end
 
     def receive_frame
-      if buffer = @socket.read(8)
+      if buffer = read_exactly(8)
         size, type = buffer.unpack('l>l>')
         size -= 4 # we want the size of the data part and type already took up 4 bytes
-        data = @socket.read(size)
+        data = read_exactly(size)
         frame_class = frame_class_for_type(type)
         return frame_class.new(data, self)
       end
+    end
+
+    # SSLSocket#read buffers ahead in Ruby, where IO.select can't see it; readpartial doesn't
+    def read_exactly(size)
+      data = ''.b
+      data << @socket.readpartial(size - data.bytesize) while data.bytesize < size
+      data
+    rescue EOFError
+      nil
     end
 
     FRAME_CLASSES = [Response, Error, Message]
@@ -262,43 +271,44 @@ module Nsq
 
     def read_write_loop
       loop do
-        begin
-          ready, _, _ = IO.select([@socket, @write_queue])
+        ready, _, _ = IO.select([@socket, @write_queue])
 
-          if ready.include?(@socket)
-            frame = receive_frame
-            if frame.is_a?(Response)
-              handle_response(frame)
-            elsif frame.is_a?(Error)
-              handle_error(frame)
-            elsif frame.is_a?(Message)
-              debug "<<< #{frame.body}"
-              if @max_attempts && frame.attempts > @max_attempts
-                # bypass @write_queue: this thread is its only consumer
-                write_to_socket "FIN #{frame.id}\n"
-                decrement_in_flight
-              else
-                @queue.push(frame) if @queue
-              end
-            else
-              raise UnexpectedFrameError.new(frame)
-            end
-          end
+        if ready.include?(@socket)
+          handle_frame(receive_frame)
+          # bytes already decrypted by OpenSSL are invisible to IO.select
+          handle_frame(receive_frame) while @socket.respond_to?(:pending) && @socket.pending > 0
+        end
 
-          if ready.include?(@write_queue)
-            data = @write_queue.pop
-            if data[:message] == :stop_loop
-              return if data[:thread] == Thread.current
-              next # left behind by a loop that exited before reading it
-            end
-            write_to_socket(data[:message])
+        if ready.include?(@write_queue)
+          data = @write_queue.pop
+          if data[:message] == :stop_loop
+            return if data[:thread] == Thread.current
+            next # left behind by a loop that exited before reading it
           end
-        rescue IO::WaitReadable
-          retry
+          write_to_socket(data[:message])
         end
       end
     rescue Exception => ex
       die(ex)
+    end
+
+    def handle_frame(frame)
+      if frame.is_a?(Response)
+        handle_response(frame)
+      elsif frame.is_a?(Error)
+        handle_error(frame)
+      elsif frame.is_a?(Message)
+        debug "<<< #{frame.body}"
+        if @max_attempts && frame.attempts > @max_attempts
+          # bypass @write_queue: this thread is its only consumer
+          write_to_socket "FIN #{frame.id}\n"
+          decrement_in_flight
+        else
+          @queue.push(frame) if @queue
+        end
+      else
+        raise UnexpectedFrameError.new(frame)
+      end
     end
 
     # Waits for death of connection

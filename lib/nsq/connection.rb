@@ -251,7 +251,9 @@ module Nsq
       # and a custom-made message is sent signaling to the loop to stop
       # gracefully
       if @read_write_loop_thread
-        @write_queue.push(message: :stop_loop) if @read_write_loop_thread.alive?
+        if @read_write_loop_thread.alive?
+          @write_queue.push(message: :stop_loop, thread: @read_write_loop_thread)
+        end
         @read_write_loop_thread.join
         @read_write_loop_thread = nil
       end
@@ -282,7 +284,10 @@ module Nsq
 
           if ready.include?(@write_queue)
             data = @write_queue.pop
-            return if data[:message] == :stop_loop
+            if data[:message] == :stop_loop
+              return if data[:thread] == Thread.current
+              next # left behind by a loop that exited before reading it
+            end
             write_to_socket(data[:message])
           end
         rescue IO::WaitReadable

@@ -5,7 +5,7 @@ jobs:
   test:
     strategy:
       matrix:
-        ruby_version: ['3.2', '3.3', '3.4', '4.0']
+        ruby_version: ['2.7', '3.2', '3.3', '3.4', '4.0']
     runs-on: ubuntu-24.04
     steps:
       - name: Install NSQ
@@ -21,6 +21,8 @@ jobs:
       - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
         with:
           ruby-version: ${{ matrix.ruby_version }}
+          # Gemfile.lock is BUNDLED WITH a Bundler that needs Ruby >= 3.1; 2.4 is the last Bundler supporting Ruby 2.7
+          bundler: ${{ matrix.ruby_version == '2.7' && '2.4' || 'Gemfile.lock' }}
           bundler-cache: true # runs 'bundle install' and caches installed gems automatically
 
       - name: Run tests
